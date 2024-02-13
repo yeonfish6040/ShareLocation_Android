@@ -15,6 +15,8 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
 import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -28,10 +30,8 @@ import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
 import com.google.android.gms.auth.api.signin.GoogleSignInClient;
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.gms.common.api.ApiException;
-import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationResult;
-import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
@@ -75,8 +75,8 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     private Map<String, Marker> markers = new HashMap<>();
 
     // location
-    private FusedLocationProviderClient fusedLocationClient;
-    private LocationCallback locationUpdates;
+    private LocationManager locationManager;
+    private LocationListener locationUpdates;
     private boolean track = false;
     private Location curPos;
     private Timer locationUpdate;
@@ -141,37 +141,36 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     public void onMapReady(GoogleMap googleMap) {
         mMap = googleMap;
 
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+        locationManager = (LocationManager)getSystemService(Context.LOCATION_SERVICE);
 
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
-        fusedLocationClient.getLastLocation().addOnSuccessListener(this, new OnSuccessListener<Location>() {
+
+        Location location = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
+
+        if (location == null) return;
+
+        curPos = location;
+
+        LatLng pos = new LatLng(location.getLatitude(), location.getLongitude());
+        mMarker = mMap.addMarker(new MarkerOptions()
+                .position(pos)
+                .title(user != null ? user.getDisplayName() : "Me!")
+                .snippet(curPos.getSpeed()+" km/h"));
+        mMarker.setIcon(BitmapDescriptorFactory.fromBitmap(getBitmapFromVectorDrawable(MainActivity.this, R.drawable.arrow_maps_icon_217969)));
+        mMarker.setRotation(location.getBearing());
+        mMarker.showInfoWindow();
+
+        mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 17.0F, mMap.getCameraPosition().tilt, mMap.getCameraPosition().bearing)), 1000, null);
+
+        mMap.setOnCameraMoveListener(new GoogleMap.OnCameraMoveListener() {
             @Override
-            public void onSuccess(Location location) {
-                if (location == null) return;
-
-                curPos = location;
-
-                LatLng pos = new LatLng(location.getLatitude(), location.getLongitude());
-                mMarker = mMap.addMarker(new MarkerOptions()
-                        .position(pos)
-                        .title(user != null ? user.getDisplayName() : "Me!")
-                        .snippet(curPos.getSpeed()+" km/h"));
-                mMarker.setIcon(BitmapDescriptorFactory.fromBitmap(getBitmapFromVectorDrawable(MainActivity.this, R.drawable.arrow_maps_icon_217969)));
-                mMarker.setRotation(location.getBearing());
-                mMarker.showInfoWindow();
-
-                mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 17.0F, mMap.getCameraPosition().tilt, mMap.getCameraPosition().bearing)), 1000, null);
-
-                mMap.setOnCameraMoveListener(new GoogleMap.OnCameraMoveListener() {
-                    @Override
-                    public void onCameraMove() {
-                        mMarker.setRotation(curPos.getBearing()-mMap.getCameraPosition().bearing);
-                    }
-                });
-
-                locationUpdate = startSyncLocation();
+            public void onCameraMove() {
+                mMarker.setRotation(curPos.getBearing()-mMap.getCameraPosition().bearing);
             }
         });
+
+        locationUpdate = startSyncLocation();
+
 
         startRequestLocation();
     }
@@ -218,7 +217,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     @Override // startLocationUpdate when re-open app
     public void onResume() {
         super.onResume();
-        if (fusedLocationClient != null) {
+        if (locationManager != null) {
             startRequestLocation();
         }
     }
@@ -227,7 +226,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     public void onPause() {
         super.onPause();
         if (locationUpdates != null) {
-            fusedLocationClient.removeLocationUpdates(locationUpdates);
+            locationManager.removeUpdates(locationUpdates);
         }
     }
 
@@ -301,10 +300,10 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         requestBuilder.setIntervalMillis(1000);
         requestBuilder.setWaitForAccurateLocation(true);
 
-        locationUpdates = new LocationCallback() {
+        locationUpdates = new LocationListener() {
             @Override
-            public void onLocationResult(LocationResult locationResult) {
-                curPos = locationResult.getLastLocation();
+            public void onLocationChanged(@NonNull Location location) {
+                curPos = location;
 
                 LatLng pos = new LatLng(curPos.getLatitude(), curPos.getLongitude());
                 mMarker.setPosition(pos);
@@ -317,7 +316,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                     mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 15f+(5/(curPos.getSpeed() == 0.0f ? 1f : curPos.getSpeed())), mMap.getCameraPosition().tilt, mMap.getCameraPosition().bearing)), 1000, null);
             }
         };
-        fusedLocationClient.requestLocationUpdates(requestBuilder.build(), locationUpdates, Looper.myLooper());
+        locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000, 0, locationUpdates);
     }
 
     private Timer startSyncLocation() {
