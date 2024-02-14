@@ -13,8 +13,8 @@ android {
         applicationId = "com.yeonfish.sharelocation"
         minSdk = 31
         targetSdk = 34
-        versionCode = 1
-        versionName = "2.0"
+        versionCode = 21
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 

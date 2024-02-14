@@ -7,18 +7,18 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:549662034486:android:a828ff17a52bdfebc8a697",
+        "mobilesdk_app_id": "1:549662034486:android:bf670ff8cd757973c8a697",
         "android_client_info": {
           "package_name": "com.yeonfish.sharelocation"
         }
       },
       "oauth_client": [
         {
-          "client_id": "549662034486-adf775aacmj5nunsnnenr6m4gpoldk1j.apps.googleusercontent.com",
+          "client_id": "549662034486-udp06426qa0othtgsgtaj4cbh5fphb47.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.yeonfish.sharelocation",
-            "certificate_hash": "31d0aca3a6841e0010ad32296717314e98c9a7ea"
+            "certificate_hash": "10458f56c6578ae463a4b60095aa440932029b73"
           }
         },
         {

@@ -128,8 +128,8 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
         isGranted = (
                 ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED &&
-                        ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED &&
-                        ActivityCompat.checkSelfPermission(this, android.Manifest.permission.FOREGROUND_SERVICE_LOCATION) == PackageManager.PERMISSION_GRANTED
+                        ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+//                        ActivityCompat.checkSelfPermission(this, android.Manifest.permission.FOREGROUND_SERVICE_LOCATION) == PackageManager.PERMISSION_GRANTED
         );
         if (!isGranted) {
             String[] permissions = {android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION};
@@ -184,9 +184,9 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
             if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 isRestartRequired = true;
 
-                Toast.makeText(this, "위치에 항상 접근할 수 있도록 권한을 허용해주세요.", Toast.LENGTH_LONG).show();
-                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, 1);
-                Toast.makeText(this, "권한을 허용한 후, 앱을 재시작 해 주세요", Toast.LENGTH_LONG).show();
+//                Toast.makeText(this, "위치에 항상 접근할 수 있도록 권한을 허용해주세요.", Toast.LENGTH_LONG).show();
+//                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, 1);
+//                Toast.makeText(this, "권한을 허용한 후, 앱을 재시작 해 주세요", Toast.LENGTH_LONG).show();
             }else {
                 Toast.makeText(this, "권한이 허용되었습니다.", Toast.LENGTH_LONG).show();
             }
@@ -250,7 +250,8 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                     binding.buttonCLocation.setBackgroundColor(getColor(R.color.disable));
                 }else {
                     track = true;
-                    mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(new LatLng(curPos.getLatitude(), curPos.getLongitude()), 15f+(5/(curPos.getSpeed() == 0.0f ? 2f : curPos.getSpeed())), mMap.getCameraPosition().tilt, curPos.getBearing())), 1000, null);
+                    if (curPos != null)
+                        mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(new LatLng(curPos.getLatitude(), curPos.getLongitude()), 15f+(5/(curPos.getSpeed() == 0.0f ? 2f : curPos.getSpeed())), mMap.getCameraPosition().tilt, curPos.getBearing())), 1000, null);
                     binding.buttonCLocation.setBackgroundColor(getColor(R.color.enable));
                 }
             }
@@ -307,13 +308,15 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                 curPos = locationResult.getLastLocation();
 
                 LatLng pos = new LatLng(curPos.getLatitude(), curPos.getLongitude());
-                mMarker.setPosition(pos);
-                mMarker.setRotation(curPos.getBearing());
-                mMarker.setSnippet(curPos.getSpeed()+" km/h");
+                if (mMarker != null) {
+                    mMarker.setPosition(pos);
+                    mMarker.setRotation(curPos.getBearing());
+                    mMarker.setSnippet(curPos.getSpeed()+" km/h");
+                }
 
                 binding.speedTextView.setText(String.valueOf(new BigDecimal(curPos.getSpeed()).setScale(2, RoundingMode.HALF_DOWN))+" km/h");
 
-                if (track) // set zoom by speed
+                if (track && mMap != null) // set zoom by speed
                     mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 15f+(5/(curPos.getSpeed() == 0.0f ? 1f : curPos.getSpeed())), mMap.getCameraPosition().tilt, mMap.getCameraPosition().bearing)), 1000, null);
             }
         };
@@ -340,8 +343,6 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                         result = HttpUtil.getInstance().post("https://lyj.kr/Sync", query, null);
                     }
 
-                    Log.d("Sync", result == null ? "NULL" : result);
-
                     try {
                         JSONArray parsedResult = new JSONArray(result);
                         Map<String, Marker> newList = new HashMap<>();
@@ -366,29 +367,30 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                                 });
 
                                 newList.put(tmp.getString("id"), mkrTmp);
-                            }
+                            }else {
+                                MarkerOptions mkrOptTmp = new MarkerOptions();
+                                mkrOptTmp.icon(BitmapDescriptorFactory.fromBitmap(getBitmapFromVectorDrawable(MainActivity.this, R.drawable.arrow_maps_icon_217970)));
+                                mkrOptTmp.title(tmp.getString("name"));
+                                mkrOptTmp.snippet(tmp.getString("speed")+" km/h");
+                                mkrOptTmp.rotation(Float.parseFloat(tmp.getString("heading"))-mMap.getCameraPosition().bearing);
+                                mkrOptTmp.position(new LatLng(Double.parseDouble(tmp.getString("loc_lat")), Double.parseDouble(tmp.getString("loc_lng"))));
 
-                            MarkerOptions mkrOptTmp = new MarkerOptions();
-                            mkrOptTmp.icon(BitmapDescriptorFactory.fromBitmap(getBitmapFromVectorDrawable(MainActivity.this, R.drawable.arrow_maps_icon_217970)));
-                            mkrOptTmp.title(tmp.getString("name"));
-                            mkrOptTmp.snippet(tmp.getString("speed")+" km/h");
-                            mkrOptTmp.rotation(Float.parseFloat(tmp.getString("heading"))-mMap.getCameraPosition().bearing);
-                            mkrOptTmp.position(new LatLng(Double.parseDouble(tmp.getString("loc_lat")), Double.parseDouble(tmp.getString("loc_lng"))));
-
-                            new Handler(Looper.getMainLooper()).post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    try {
-                                        Marker mkrTmp = mMap.addMarker(mkrOptTmp);
-                                        mkrTmp.showInfoWindow();
-                                        newList.put(tmp.getString("id"), mkrTmp);
-                                    } catch (JSONException e) {
-                                        throw new RuntimeException(e);
+                                new Handler(Looper.getMainLooper()).post(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        try {
+                                            Marker mkrTmp = mMap.addMarker(mkrOptTmp);
+                                            mkrTmp.showInfoWindow();
+                                            newList.put(tmp.getString("id"), mkrTmp);
+                                        } catch (JSONException e) {
+                                            throw new RuntimeException(e);
+                                        }
                                     }
-                                }
-                            });
+                                });
+                            }
                         }
 
+                        markers.forEach((k,v)->v.remove());
                         markers.clear();
                         markers = newList;
                     } catch (JSONException e) {
