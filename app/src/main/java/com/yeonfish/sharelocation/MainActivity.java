@@ -2,14 +2,27 @@ package com.yeonfish.sharelocation;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+import androidx.credentials.Credential;
+import androidx.credentials.CredentialManager;
+import androidx.credentials.CredentialManagerCallback;
+import androidx.credentials.CustomCredential;
+import androidx.credentials.GetCredentialRequest;
+import androidx.credentials.GetCredentialResponse;
+import androidx.credentials.GetPasswordOption;
+import androidx.credentials.GetPublicKeyCredentialOption;
+import androidx.credentials.PasswordCredential;
+import androidx.credentials.PublicKeyCredential;
+import androidx.credentials.exceptions.GetCredentialException;
 
 import android.Manifest;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
@@ -17,17 +30,15 @@ import android.graphics.drawable.Drawable;
 import android.location.Location;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.widget.Toast;
 
-import com.google.android.gms.auth.api.signin.GoogleSignIn;
-import com.google.android.gms.auth.api.signin.GoogleSignInAccount;
-import com.google.android.gms.auth.api.signin.GoogleSignInClient;
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions;
 import com.google.android.gms.common.api.ApiException;
+import com.google.android.gms.common.api.CommonStatusCodes;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationResult;
@@ -43,12 +54,15 @@ import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.tasks.OnSuccessListener;
-import com.google.android.gms.tasks.Task;
+import com.google.android.libraries.identity.googleid.GetGoogleIdOption;
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential;
+import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
 import com.kakao.sdk.common.KakaoSdk;
 import com.yeonfish.sharelocation.databinding.ActivityMainBinding;
 import com.yeonfish.sharelocation.util.HttpUtil;
 import com.yeonfish.sharelocation.util.TimeUtil;
 import com.yeonfish.sharelocation.util.UUID;
+import com.yeonfish.sharelocation.values.GoogleUser;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -58,11 +72,14 @@ import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URLEncoder;
+import java.security.SecureRandom;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 
+@RequiresApi(34)
 public class MainActivity extends AppCompatActivity implements OnMapReadyCallback {
 
     private ActivityMainBinding binding;
@@ -82,10 +99,9 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     private Timer locationUpdate;
 
     // google auth
-    private static final int REQ_ONE_TAP = 7395;  // Can be any integer unique to the Activity.
-    private boolean showOneTapUI = true;
-    private GoogleSignInAccount user;
-    private GoogleSignInClient googleSignInClient;
+    private CredentialManager credentialManager;
+    private GoogleUser user;
+    private static final int REQ_ONE_TAP = 100;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -93,24 +109,23 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
 
-        SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
-                .findFragmentById(R.id.map);
-        mapFragment.getMapAsync(this);
-
         KakaoSdk.init(this, "7c91ec8d182523adfa1e6f0df190eff3");
 
-        googleSignInClient = GoogleSignIn.getClient(this, new GoogleSignInOptions.Builder()
-                .requestIdToken(getString(R.string.default_web_client_id))
-                .requestEmail()
-                .requestProfile()
-                .build());
-        if (GoogleSignIn.getLastSignedInAccount(this) == null){
-            googleSignInClient.signOut();
-            Intent signInIntent = googleSignInClient.getSignInIntent();
-            startActivityForResult(signInIntent, REQ_ONE_TAP);
-        }else {
-            user = GoogleSignIn.getLastSignedInAccount(this);
-            binding.accountTextView.setText("계정: "+user.getEmail()+" (로그아웃)");
+        credentialManager = CredentialManager.create(this);
+        SharedPreferences sp = getApplicationContext().getSharedPreferences("sharelocation_user", 0);
+        if (sp.getString("id", null) == null)
+            try {
+                startGoogleLogin();
+            } catch (JSONException e) {}
+        else {
+            GoogleUser userTmp = new GoogleUser();
+            userTmp.setId(sp.getString("id", null));
+            userTmp.setEmail(sp.getString("email", null));
+            userTmp.setDisplayName(sp.getString("name", null));
+            userTmp.setProfilePicture(sp.getString("profilePicture", null));
+            this.user = userTmp;
+
+            binding.accountTextView.setText("계정: "+this.user.getEmail()+" (로그아웃)");
         }
 
         // get group
@@ -135,6 +150,10 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
             String[] permissions = {android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION};
             ActivityCompat.requestPermissions(this, permissions, 6040);
         }
+
+        SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
+                .findFragmentById(R.id.map);
+        mapFragment.getMapAsync(this);
     }
 
     @Override
@@ -193,28 +212,6 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         }
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-
-        switch (requestCode) {
-            case REQ_ONE_TAP:
-                Task<GoogleSignInAccount> task = GoogleSignIn.getSignedInAccountFromIntent(data);
-                try {
-                    // Google Sign In was successful, authenticate with Firebase
-                    GoogleSignInAccount account = task.getResult(ApiException.class);
-                    Log.d("Google Login", "GoogleAuth:" + account.getId());
-                    user = GoogleSignIn.getLastSignedInAccount(this);
-                    binding.accountTextView.setText("계정: "+user.getEmail()+" (로그아웃)");
-                    mMarker.setTitle(user.getDisplayName());
-                } catch (ApiException e) {
-                    // Google Sign In failed, update UI appropriately
-                    Log.w("Google Login", "Google sign in failed", e);
-                }
-                break;
-        }
-    }
-
     @Override // startLocationUpdate when re-open app
     public void onResume() {
         super.onResume();
@@ -257,7 +254,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
             }
             if (v.getId() == R.id.accountTextView) {
                 if (user != null) {
-                    googleSignInClient.signOut();
+                    logout();
                     TimeUtil.setTimeout(new Runnable() {
                         @Override
                         public void run() {
@@ -265,9 +262,10 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                         }
                     }, 200);
                 }else {
-                    googleSignInClient.signOut();
-                    Intent signInIntent = googleSignInClient.getSignInIntent();
-                    startActivityForResult(signInIntent, REQ_ONE_TAP);
+                    logout();
+                    try {
+                        startGoogleLogin();
+                    } catch (JSONException e) {}
                 }
             }
         }
@@ -281,6 +279,113 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         Intent mainIntent = Intent.makeRestartActivityTask(componentName);
         startActivity(mainIntent);
         System.exit(0);
+    }
+
+    public void startGoogleLogin() throws JSONException {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) { // TODO: support for api level under 34
+            SecureRandom random = new SecureRandom();
+            byte[] challenge = new byte[32]; // Use 32 bytes for the challenge
+            random.nextBytes(challenge);
+            String challengeBase64 = Base64.getUrlEncoder().withoutPadding().encodeToString(challenge);
+            JSONObject requestJson = new JSONObject();
+            requestJson.put("challenge", challengeBase64);
+            requestJson.put("rpId", "com.yeonfish.sharelocation");
+
+            GetCredentialRequest request = new GetCredentialRequest.Builder()
+//                    .addCredentialOption(new GetPasswordOption())
+//                    .addCredentialOption(new GetPublicKeyCredentialOption(requestJson.toString()))
+                    .addCredentialOption(new GetGoogleIdOption.Builder()
+                            .setServerClientId(getString(R.string.web_client_id))
+                            .setFilterByAuthorizedAccounts(false)
+                            .build())
+                    .build();
+
+            credentialManager.getCredentialAsync(this, request, new CancellationSignal(), getMainExecutor(), new CredentialManagerCallback<GetCredentialResponse, GetCredentialException>() {
+
+                @Override
+                public void onResult(GetCredentialResponse getCredentialResponse) {
+                    Credential credential = getCredentialResponse.getCredential();
+
+                    if (credential instanceof PublicKeyCredential) {
+                        String responseJson = ((PublicKeyCredential) credential).getAuthenticationResponseJson();
+                        Log.d("Google login", responseJson);
+                    } else if (credential instanceof PasswordCredential) {
+                        String username = ((PasswordCredential) credential).getId();
+                        String password = ((PasswordCredential) credential).getPassword();
+                        Log.d("Google login", username);
+                        Log.d("Google login", password);
+                    } else if (credential instanceof CustomCredential) {
+                        if (GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL.equals(credential.getType())) {
+                            try {
+                                GoogleIdTokenCredential idTokenCredential = GoogleIdTokenCredential.createFrom(credential.getData());
+                                String idToken = idTokenCredential.getIdToken();
+
+                                new Thread(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        try {
+                                            HttpUtil httpUtil = HttpUtil.getInstance();
+                                            String result = httpUtil.post("https://oauth2.googleapis.com/tokeninfo", "id_token="+idToken, null);
+                                            Log.d("Google Login", result);
+                                            JSONObject resultJSON = new JSONObject(result);
+
+                                            SharedPreferences sp = getApplicationContext().getSharedPreferences("sharelocation_user", 0);
+                                            SharedPreferences.Editor spe = sp.edit();
+                                            spe.putString("id", resultJSON.getString("sub"));
+                                            spe.putString("email", idTokenCredential.getId());
+                                            spe.putString("name", idTokenCredential.getDisplayName());
+                                            spe.putString("profilePicture", String.valueOf(idTokenCredential.getProfilePictureUri()));
+                                            spe.apply();
+
+                                            Log.d("Google Login", sp.getString("id", "None"));
+
+                                            new Handler(getMainLooper()).post(new Runnable() {
+                                                @Override
+                                                public void run() {
+                                                    updateScreen();
+                                                }
+                                            });
+                                        }catch (Exception e) {}
+                                    }
+                                }).start();
+                            } catch (Exception e) {
+                                Log.e("Google Login", "Failed to parse an GoogleIdTokenCredential", e);
+                            }
+                        } else {
+                            // Catch any unrecognized custom credential type here.
+                            Log.e("Google Login", "Unexpected type of credential");
+                        }
+                    } else {
+                        Log.e("Google Login", "Unexpected type of credential");
+                    }
+                }
+
+                @Override
+                public void onError(@NonNull GetCredentialException e) {
+                    Log.e("Google Login", "Error occured");
+                    Log.e("Google Login", e.getLocalizedMessage());
+                    e.printStackTrace();
+                }
+            });
+        }
+    }
+
+    public void logout() {
+        getApplicationContext().getSharedPreferences("sharelocation_user", 0).edit().clear().apply();
+    }
+
+    public void updateScreen() {
+        SharedPreferences sp = getApplicationContext().getSharedPreferences("sharelocation_user", 0);
+
+        GoogleUser userTmp = new GoogleUser();
+        userTmp.setId(sp.getString("id", null));
+        userTmp.setEmail(sp.getString("email", null));
+        userTmp.setDisplayName(sp.getString("name", null));
+        userTmp.setProfilePicture(sp.getString("profilePicture", null));
+        this.user = userTmp;
+
+        binding.accountTextView.setText("계정: "+this.user.getEmail()+" (로그아웃)");
+        mMarker.setTitle(this.user.getDisplayName());
     }
 
     public static Bitmap getBitmapFromVectorDrawable(Context context, int drawableId) {
@@ -351,6 +456,8 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
                             if (user != null && user.getId().equals(tmp.getString("id"))) continue;
 
+                            Log.d("position", tmp.toString());
+
                             if (markers.containsKey(tmp.getString("id"))) {
                                 Marker mkrTmp = markers.get(tmp.getString("id"));
                                 new Handler(Looper.getMainLooper()).post(new Runnable() {
@@ -368,17 +475,17 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
                                 newList.put(tmp.getString("id"), mkrTmp);
                             }else {
-                                MarkerOptions mkrOptTmp = new MarkerOptions();
-                                mkrOptTmp.icon(BitmapDescriptorFactory.fromBitmap(getBitmapFromVectorDrawable(MainActivity.this, R.drawable.arrow_maps_icon_217970)));
-                                mkrOptTmp.title(tmp.getString("name"));
-                                mkrOptTmp.snippet(tmp.getString("speed")+" km/h");
-                                mkrOptTmp.rotation(Float.parseFloat(tmp.getString("heading"))-mMap.getCameraPosition().bearing);
-                                mkrOptTmp.position(new LatLng(Double.parseDouble(tmp.getString("loc_lat")), Double.parseDouble(tmp.getString("loc_lng"))));
-
                                 new Handler(Looper.getMainLooper()).post(new Runnable() {
                                     @Override
                                     public void run() {
                                         try {
+                                            MarkerOptions mkrOptTmp = new MarkerOptions();
+                                            mkrOptTmp.icon(BitmapDescriptorFactory.fromBitmap(getBitmapFromVectorDrawable(MainActivity.this, R.drawable.arrow_maps_icon_217970)));
+                                            mkrOptTmp.title(tmp.getString("name"));
+                                            mkrOptTmp.snippet(tmp.getString("speed")+" km/h");
+                                            mkrOptTmp.rotation(Float.parseFloat(tmp.getString("heading"))-mMap.getCameraPosition().bearing);
+                                            mkrOptTmp.position(new LatLng(Double.parseDouble(tmp.getString("loc_lat")), Double.parseDouble(tmp.getString("loc_lng"))));
+
                                             Marker mkrTmp = mMap.addMarker(mkrOptTmp);
                                             mkrTmp.showInfoWindow();
                                             newList.put(tmp.getString("id"), mkrTmp);
@@ -390,9 +497,21 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                             }
                         }
 
-                        markers.forEach((k,v)->v.remove());
-                        markers.clear();
-                        markers = newList;
+                        new Handler(getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                markers.forEach((k,v)->{
+                                    if (!newList.containsKey(k)) {
+                                        v.remove();
+                                    }else {
+                                        newList.remove(k);
+                                    }
+                                });
+                                newList.forEach((k, v) -> {
+                                    markers.put(k, v);
+                                });
+                            }
+                        });
                     } catch (JSONException e) {
                         throw new RuntimeException(e);
                     }

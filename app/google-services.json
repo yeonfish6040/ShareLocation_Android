@@ -1,41 +1,41 @@
 {
   "project_info": {
-    "project_number": "549662034486",
-    "project_id": "multi-purpose-map",
-    "storage_bucket": "multi-purpose-map.appspot.com"
+    "project_number": "597358511717",
+    "project_id": "sharelocation-421705",
+    "storage_bucket": "sharelocation-421705.appspot.com"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:549662034486:android:bf670ff8cd757973c8a697",
+        "mobilesdk_app_id": "1:597358511717:android:1a24f0938d23c596d6688c",
         "android_client_info": {
           "package_name": "com.yeonfish.sharelocation"
         }
       },
       "oauth_client": [
         {
-          "client_id": "549662034486-udp06426qa0othtgsgtaj4cbh5fphb47.apps.googleusercontent.com",
+          "client_id": "597358511717-o93gu875jn7anpn5v75fp27g2l8olboo.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
             "package_name": "com.yeonfish.sharelocation",
-            "certificate_hash": "10458f56c6578ae463a4b60095aa440932029b73"
+            "certificate_hash": "54618e2f44c3082b101dbef086aefe7dc028e5bd"
           }
         },
         {
-          "client_id": "549662034486-ta8luoa4ililgph95j54jvd2r625nav8.apps.googleusercontent.com",
+          "client_id": "597358511717-plf3or7lf8cvtc47j3vf7gpaigsq000o.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
       "api_key": [
         {
-          "current_key": "AIzaSyA8M2s4M5qsUzrCkyn8692p67uh8HJRD4w"
+          "current_key": "AIzaSyCApffsZ_rftmsIQJr3Gvgl-QI08DSEoAs"
         }
       ],
       "services": {
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "549662034486-52qjnqhdd59otlhjn21s2duae268gjku.apps.googleusercontent.com",
+              "client_id": "597358511717-plf3or7lf8cvtc47j3vf7gpaigsq000o.apps.googleusercontent.com",
               "client_type": 3
             }
           ]

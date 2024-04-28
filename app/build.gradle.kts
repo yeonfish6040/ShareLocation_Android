@@ -13,8 +13,8 @@ android {
         applicationId = "com.yeonfish.sharelocation"
         minSdk = 31
         targetSdk = 34
-        versionCode = 21
-        versionName = "1.2"
+        versionCode = 47
+        versionName = "0.0.47"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -31,6 +31,7 @@ android {
             )
         }
     }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
@@ -39,18 +40,28 @@ android {
     dataBinding {
         enable = true
     }
+
+    packagingOptions {
+        exclude("META-INF/DEPENDENCIES")
+    }
+
 }
 
 dependencies {
 
     implementation("androidx.appcompat:appcompat:1.6.1")
-    implementation("com.google.android.material:material:1.11.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    implementation("androidx.credentials:credentials:1.3.0-alpha01")
+    implementation("androidx.credentials:credentials-play-services-auth:1.3.0-alpha01")
+    implementation("com.google.android.material:material:1.11.0")
+    implementation("com.google.gms:google-services:4.4.1")
     implementation("com.google.android.gms:play-services-maps:18.2.0")
     implementation("com.google.android.gms:play-services-location:21.1.0")
+    implementation("com.google.android.libraries.identity.googleid:googleid:1.1.0")
+    implementation("com.google.api-client:google-api-client:1.33.0")
     implementation("com.google.firebase:firebase-analytics")
     implementation("com.google.firebase:firebase-crashlytics")
-    implementation("com.google.android.gms:play-services-auth:20.7.0")
+    implementation("com.google.firebase:firebase-auth")
     implementation("com.kakao.sdk:v2-share:2.19.0")
     implementation(platform("com.google.firebase:firebase-bom:32.7.2"))
 
@@ -58,4 +69,5 @@ dependencies {
 
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+
 }

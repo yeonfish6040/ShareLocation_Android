@@ -29,9 +29,9 @@
               <option name="connection">
                 <ConnectionSetting>
                   <option name="appId" value="com.yeonfish.sharelocation" />
-                  <option name="mobileSdkAppId" value="1:549662034486:android:a828ff17a52bdfebc8a697" />
-                  <option name="projectId" value="multi-purpose-map" />
-                  <option name="projectNumber" value="549662034486" />
+                  <option name="mobileSdkAppId" value="1:597358511717:android:1a24f0938d23c596d6688c" />
+                  <option name="projectId" value="sharelocation-421705" />
+                  <option name="projectNumber" value="597358511717" />
                 </ConnectionSetting>
               </option>
               <option name="signal" value="SIGNAL_UNSPECIFIED" />
