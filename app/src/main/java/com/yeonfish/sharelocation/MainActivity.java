@@ -241,15 +241,19 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
             String result;
 
             if (user == null)
-                result = HttpUtil.getInstance().post("https://lyj.kr/Sync", "group="+group, null);
+                try {
+                    result = HttpUtil.getInstance().post("https://lyj.kr/Sync", "group="+group, null);
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             else {
                 String query;
                 try {
                     query = "id="+user.getId()+"&group="+group+"&name="+ URLEncoder.encode(user.getDisplayName(), "utf-8")+"&loc_lat="+curPos.getLatitude()+"&loc_lng="+curPos.getLongitude()+"&heading="+curPos.getBearing()+"&speed="+curPos.getSpeed();
-                } catch (UnsupportedEncodingException e) {
-                    throw new RuntimeException(e);
+                    result = HttpUtil.getInstance().post("https://lyj.kr/Sync", query, null);
+                } catch (Exception e) {
+                    e.printStackTrace();
                 }
-                result = HttpUtil.getInstance().post("https://lyj.kr/Sync", query, null);
             }
 
             try {
