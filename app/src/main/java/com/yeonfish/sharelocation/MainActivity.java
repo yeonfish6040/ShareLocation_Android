@@ -110,10 +110,8 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         // get group
         Intent intent = getIntent();
         Uri data = intent.getData();
-        if (data != null)
-            group = data.getQueryParameter("group");
-        if (group == null)
-            group = UUID.generate();
+        if (data != null) group = data.getQueryParameter("group");
+        if (group == null) group = UUID.generate();
         binding.groupTextView.setText("그룹: " + group);
 
         binding.buttonShare.setOnClickListener(clickListener);
@@ -160,7 +158,6 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
                 mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 17.0F, mMap.getCameraPosition().tilt, mMap.getCameraPosition().bearing)), 1000, null);
                 mMap.setOnCameraMoveListener(new GoogleMap.OnCameraMoveListener() { @Override public void onCameraMove() {mMarker.setRotation(curPos.getBearing()-mMap.getCameraPosition().bearing); }});
-                locationUpdate = TimeUtil.setInterval(new TimerTask() { @Override public void run() { syncLocation(); } }, 1000);
             }
         });
 
@@ -231,6 +228,12 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                 binding.speedTextView.setText(String.valueOf(new BigDecimal(curPos.getSpeed()).setScale(2, RoundingMode.HALF_DOWN))+" km/h");
                 if (track && mMap != null) // set zoom by speed
                     mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 15f+(5/(curPos.getSpeed() == 0.0f ? 1f : curPos.getSpeed())), mMap.getCameraPosition().tilt, mMap.getCameraPosition().bearing)), 1000, null);
+                new Thread(new Runnable() {
+                    @Override
+                    public void run() {
+                        syncLocation();
+                    }
+                }).run();
             }
         };
         fusedLocationClient.requestLocationUpdates(requestBuilder.build(), locationUpdates, Looper.myLooper());
@@ -238,25 +241,17 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     private void syncLocation() {
         if (curPos != null) {
-            String result;
+            try {
+                String result = "";
 
-            if (user == null)
-                try {
+                if (user == null)
                     result = HttpUtil.getInstance().post("https://lyj.kr/Sync", "group="+group, null);
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
-            else {
-                String query;
-                try {
+                else {
+                    String query;
                     query = "id="+user.getId()+"&group="+group+"&name="+ URLEncoder.encode(user.getDisplayName(), "utf-8")+"&loc_lat="+curPos.getLatitude()+"&loc_lng="+curPos.getLongitude()+"&heading="+curPos.getBearing()+"&speed="+curPos.getSpeed();
                     result = HttpUtil.getInstance().post("https://lyj.kr/Sync", query, null);
-                } catch (Exception e) {
-                    e.printStackTrace();
                 }
-            }
 
-            try {
                 JSONArray parsedResult = new JSONArray(result);
                 Map<String, Marker> newList = new HashMap<>();
                 for (int i=0;i<parsedResult.length();i++) {
@@ -316,8 +311,8 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                         markers = newList;
                     }
                 });
-            } catch (JSONException e) {
-                throw new RuntimeException(e);
+            } catch (Exception e) {
+                e.printStackTrace();
             }
         }
     }
@@ -344,7 +339,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         this.user = userTmp;
 
         binding.accountTextView.setText("계정: "+this.user.getEmail()+" (로그아웃)");
-        mMarker.setTitle(this.user.getDisplayName());
+        if (mMarker != null) mMarker.setTitle(this.user.getDisplayName());
     }
 
     @Override // startLocationUpdate when re-open app
