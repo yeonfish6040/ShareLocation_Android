@@ -1,22 +1,10 @@
 package com.yeonfish.sharelocation;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
-import androidx.credentials.Credential;
 import androidx.credentials.CredentialManager;
-import androidx.credentials.CredentialManagerCallback;
-import androidx.credentials.CustomCredential;
-import androidx.credentials.GetCredentialRequest;
-import androidx.credentials.GetCredentialResponse;
-import androidx.credentials.GetPasswordOption;
-import androidx.credentials.GetPublicKeyCredentialOption;
-import androidx.credentials.PasswordCredential;
-import androidx.credentials.PublicKeyCredential;
-import androidx.credentials.exceptions.GetCredentialException;
 
 import android.Manifest;
 import android.content.ComponentName;
@@ -30,15 +18,12 @@ import android.graphics.drawable.Drawable;
 import android.location.Location;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
 import android.util.Log;
 import android.view.View;
 import android.widget.Toast;
 
-import com.google.android.gms.common.api.ApiException;
-import com.google.android.gms.common.api.CommonStatusCodes;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationResult;
@@ -56,13 +41,13 @@ import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption;
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential;
-import com.google.api.client.googleapis.auth.oauth2.GoogleIdToken;
 import com.kakao.sdk.common.KakaoSdk;
 import com.yeonfish.sharelocation.databinding.ActivityMainBinding;
+import com.yeonfish.sharelocation.user.GoogleAuth;
 import com.yeonfish.sharelocation.util.HttpUtil;
 import com.yeonfish.sharelocation.util.TimeUtil;
 import com.yeonfish.sharelocation.util.UUID;
-import com.yeonfish.sharelocation.values.GoogleUser;
+import com.yeonfish.sharelocation.user.GoogleUser;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -72,14 +57,11 @@ import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URLEncoder;
-import java.security.SecureRandom;
-import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 
-@RequiresApi(34)
 public class MainActivity extends AppCompatActivity implements OnMapReadyCallback {
 
     private ActivityMainBinding binding;
@@ -99,9 +81,9 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     private Timer locationUpdate;
 
     // google auth
+    private GoogleAuth googleAuth;
     private CredentialManager credentialManager;
     private GoogleUser user;
-    private static final int REQ_ONE_TAP = 100;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -109,21 +91,18 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
 
+        // kakao api
         KakaoSdk.init(this, "7c91ec8d182523adfa1e6f0df190eff3");
 
+        // Login
         credentialManager = CredentialManager.create(this);
-        SharedPreferences sp = getApplicationContext().getSharedPreferences("sharelocation_user", 0);
-        if (sp.getString("id", null) == null)
+        googleAuth = new GoogleAuth(this, credentialManager);
+        if (googleAuth.checkLogin())
             try {
-                startGoogleLogin();
+                googleAuth.login();
             } catch (JSONException e) {}
         else {
-            GoogleUser userTmp = new GoogleUser();
-            userTmp.setId(sp.getString("id", null));
-            userTmp.setEmail(sp.getString("email", null));
-            userTmp.setDisplayName(sp.getString("name", null));
-            userTmp.setProfilePicture(sp.getString("profilePicture", null));
-            this.user = userTmp;
+            this.user = googleAuth.getUser();
 
             binding.accountTextView.setText("계정: "+this.user.getEmail()+" (로그아웃)");
         }
@@ -147,7 +126,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 //                        ActivityCompat.checkSelfPermission(this, android.Manifest.permission.FOREGROUND_SERVICE_LOCATION) == PackageManager.PERMISSION_GRANTED
         );
         if (!isGranted) {
-            String[] permissions = {android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION};
+            String[] permissions = { android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION };
             ActivityCompat.requestPermissions(this, permissions, 6040);
         }
 
@@ -180,52 +159,12 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                 mMarker.showInfoWindow();
 
                 mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 17.0F, mMap.getCameraPosition().tilt, mMap.getCameraPosition().bearing)), 1000, null);
-
-                mMap.setOnCameraMoveListener(new GoogleMap.OnCameraMoveListener() {
-                    @Override
-                    public void onCameraMove() {
-                        mMarker.setRotation(curPos.getBearing()-mMap.getCameraPosition().bearing);
-                    }
-                });
-
-                locationUpdate = startSyncLocation();
+                mMap.setOnCameraMoveListener(new GoogleMap.OnCameraMoveListener() { @Override public void onCameraMove() {mMarker.setRotation(curPos.getBearing()-mMap.getCameraPosition().bearing); }});
+                locationUpdate = TimeUtil.setInterval(new TimerTask() { @Override public void run() { syncLocation(); } }, 1000);
             }
         });
 
         startRequestLocation();
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        boolean isRestartRequired = false;
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-                isRestartRequired = true;
-
-//                Toast.makeText(this, "위치에 항상 접근할 수 있도록 권한을 허용해주세요.", Toast.LENGTH_LONG).show();
-//                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, 1);
-//                Toast.makeText(this, "권한을 허용한 후, 앱을 재시작 해 주세요", Toast.LENGTH_LONG).show();
-            }else {
-                Toast.makeText(this, "권한이 허용되었습니다.", Toast.LENGTH_LONG).show();
-            }
-        }
-    }
-
-    @Override // startLocationUpdate when re-open app
-    public void onResume() {
-        super.onResume();
-        if (fusedLocationClient != null) {
-            startRequestLocation();
-        }
-    }
-
-    @Override // stopLocationUpdate when close app
-    public void onPause() {
-        super.onPause();
-        if (locationUpdates != null) {
-            fusedLocationClient.removeLocationUpdates(locationUpdates);
-        }
     }
 
     private final View.OnClickListener clickListener = new View.OnClickListener() {
@@ -254,7 +193,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
             }
             if (v.getId() == R.id.accountTextView) {
                 if (user != null) {
-                    logout();
+                    googleAuth.logout();
                     TimeUtil.setTimeout(new Runnable() {
                         @Override
                         public void run() {
@@ -262,14 +201,122 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                         }
                     }, 200);
                 }else {
-                    logout();
+                    googleAuth.logout();
                     try {
-                        startGoogleLogin();
+                        googleAuth.login();
                     } catch (JSONException e) {}
                 }
             }
         }
     };
+
+    private void startRequestLocation() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
+
+        LocationRequest.Builder requestBuilder = new LocationRequest.Builder(new LocationRequest());
+        requestBuilder.setMinUpdateDistanceMeters(1f);
+        requestBuilder.setIntervalMillis(1000);
+        requestBuilder.setWaitForAccurateLocation(false);
+        locationUpdates = new LocationCallback() {
+            @Override
+            public void onLocationResult(LocationResult locationResult) {
+                curPos = locationResult.getLastLocation();
+
+                LatLng pos = new LatLng(curPos.getLatitude(), curPos.getLongitude());
+                if (mMarker != null) {
+                    mMarker.setPosition(pos);
+                    mMarker.setRotation(curPos.getBearing());
+                    mMarker.setSnippet(curPos.getSpeed()+" km/h");
+                }
+                binding.speedTextView.setText(String.valueOf(new BigDecimal(curPos.getSpeed()).setScale(2, RoundingMode.HALF_DOWN))+" km/h");
+                if (track && mMap != null) // set zoom by speed
+                    mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 15f+(5/(curPos.getSpeed() == 0.0f ? 1f : curPos.getSpeed())), mMap.getCameraPosition().tilt, mMap.getCameraPosition().bearing)), 1000, null);
+            }
+        };
+        fusedLocationClient.requestLocationUpdates(requestBuilder.build(), locationUpdates, Looper.myLooper());
+    }
+
+    private void syncLocation() {
+        if (curPos != null) {
+            String result;
+
+            if (user == null)
+                result = HttpUtil.getInstance().post("https://lyj.kr/Sync", "group="+group, null);
+            else {
+                String query;
+                try {
+                    query = "id="+user.getId()+"&group="+group+"&name="+ URLEncoder.encode(user.getDisplayName(), "utf-8")+"&loc_lat="+curPos.getLatitude()+"&loc_lng="+curPos.getLongitude()+"&heading="+curPos.getBearing()+"&speed="+curPos.getSpeed();
+                } catch (UnsupportedEncodingException e) {
+                    throw new RuntimeException(e);
+                }
+                result = HttpUtil.getInstance().post("https://lyj.kr/Sync", query, null);
+            }
+
+            try {
+                JSONArray parsedResult = new JSONArray(result);
+                Map<String, Marker> newList = new HashMap<>();
+                for (int i=0;i<parsedResult.length();i++) {
+                    JSONObject tmp = parsedResult.getJSONObject(i);
+
+                    if (user != null && user.getId().equals(tmp.getString("id"))) continue;
+
+                    Log.d("position", tmp.toString());
+
+                    if (markers.containsKey(tmp.getString("id"))) {
+                        Marker mkrTmp = markers.get(tmp.getString("id"));
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    mkrTmp.setSnippet(tmp.getString("speed")+" km/h");
+                                    mkrTmp.setRotation(Float.parseFloat(tmp.getString("heading"))-mMap.getCameraPosition().bearing);
+                                    mkrTmp.setPosition(new LatLng(Double.parseDouble(tmp.getString("loc_lat")), Double.parseDouble(tmp.getString("loc_lng"))));
+                                } catch (JSONException e) {
+                                    throw new RuntimeException(e);
+                                }
+                            }
+                        });
+
+                        newList.put(tmp.getString("id"), mkrTmp);
+                    }else {
+                        new Handler(Looper.getMainLooper()).post(new Runnable() {
+                            @Override
+                            public void run() {
+                                try {
+                                    MarkerOptions mkrOptTmp = new MarkerOptions();
+                                    mkrOptTmp.icon(BitmapDescriptorFactory.fromBitmap(getBitmapFromVectorDrawable(MainActivity.this, R.drawable.arrow_maps_icon_217970)));
+                                    mkrOptTmp.title(tmp.getString("name"));
+                                    mkrOptTmp.snippet(tmp.getString("speed")+" km/h");
+                                    mkrOptTmp.rotation(Float.parseFloat(tmp.getString("heading"))-mMap.getCameraPosition().bearing);
+                                    mkrOptTmp.position(new LatLng(Double.parseDouble(tmp.getString("loc_lat")), Double.parseDouble(tmp.getString("loc_lng"))));
+
+                                    Marker mkrTmp = mMap.addMarker(mkrOptTmp);
+                                    mkrTmp.showInfoWindow();
+                                    newList.put(tmp.getString("id"), mkrTmp);
+                                } catch (JSONException e) {
+                                    throw new RuntimeException(e);
+                                }
+                            }
+                        });
+                    }
+                }
+
+                new Handler(getMainLooper()).post(new Runnable() {
+                    @Override
+                    public void run() {
+                        markers.forEach((k,v)->{
+                            if (!newList.containsKey(k)) {
+                                v.remove();
+                            }
+                        });
+                        markers = newList;
+                    }
+                });
+            } catch (JSONException e) {
+                throw new RuntimeException(e);
+            }
+        }
+    }
 
     private void restart() {
         PackageManager packageManager = getPackageManager();
@@ -281,98 +328,6 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         System.exit(0);
     }
 
-    public void startGoogleLogin() throws JSONException {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.UPSIDE_DOWN_CAKE) { // TODO: support for api level under 34
-            SecureRandom random = new SecureRandom();
-            byte[] challenge = new byte[32]; // Use 32 bytes for the challenge
-            random.nextBytes(challenge);
-            String challengeBase64 = Base64.getUrlEncoder().withoutPadding().encodeToString(challenge);
-            JSONObject requestJson = new JSONObject();
-            requestJson.put("challenge", challengeBase64);
-            requestJson.put("rpId", "com.yeonfish.sharelocation");
-
-            GetCredentialRequest request = new GetCredentialRequest.Builder()
-//                    .addCredentialOption(new GetPasswordOption())
-//                    .addCredentialOption(new GetPublicKeyCredentialOption(requestJson.toString()))
-                    .addCredentialOption(new GetGoogleIdOption.Builder()
-                            .setServerClientId(getString(R.string.web_client_id))
-                            .setFilterByAuthorizedAccounts(false)
-                            .build())
-                    .build();
-
-            credentialManager.getCredentialAsync(this, request, new CancellationSignal(), getMainExecutor(), new CredentialManagerCallback<GetCredentialResponse, GetCredentialException>() {
-
-                @Override
-                public void onResult(GetCredentialResponse getCredentialResponse) {
-                    Credential credential = getCredentialResponse.getCredential();
-
-                    if (credential instanceof PublicKeyCredential) {
-                        String responseJson = ((PublicKeyCredential) credential).getAuthenticationResponseJson();
-                        Log.d("Google login", responseJson);
-                    } else if (credential instanceof PasswordCredential) {
-                        String username = ((PasswordCredential) credential).getId();
-                        String password = ((PasswordCredential) credential).getPassword();
-                        Log.d("Google login", username);
-                        Log.d("Google login", password);
-                    } else if (credential instanceof CustomCredential) {
-                        if (GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL.equals(credential.getType())) {
-                            try {
-                                GoogleIdTokenCredential idTokenCredential = GoogleIdTokenCredential.createFrom(credential.getData());
-                                String idToken = idTokenCredential.getIdToken();
-
-                                new Thread(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        try {
-                                            HttpUtil httpUtil = HttpUtil.getInstance();
-                                            String result = httpUtil.post("https://oauth2.googleapis.com/tokeninfo", "id_token="+idToken, null);
-                                            Log.d("Google Login", result);
-                                            JSONObject resultJSON = new JSONObject(result);
-
-                                            SharedPreferences sp = getApplicationContext().getSharedPreferences("sharelocation_user", 0);
-                                            SharedPreferences.Editor spe = sp.edit();
-                                            spe.putString("id", resultJSON.getString("sub"));
-                                            spe.putString("email", idTokenCredential.getId());
-                                            spe.putString("name", idTokenCredential.getDisplayName());
-                                            spe.putString("profilePicture", String.valueOf(idTokenCredential.getProfilePictureUri()));
-                                            spe.apply();
-
-                                            Log.d("Google Login", sp.getString("id", "None"));
-
-                                            new Handler(getMainLooper()).post(new Runnable() {
-                                                @Override
-                                                public void run() {
-                                                    updateScreen();
-                                                }
-                                            });
-                                        }catch (Exception e) {}
-                                    }
-                                }).start();
-                            } catch (Exception e) {
-                                Log.e("Google Login", "Failed to parse an GoogleIdTokenCredential", e);
-                            }
-                        } else {
-                            // Catch any unrecognized custom credential type here.
-                            Log.e("Google Login", "Unexpected type of credential");
-                        }
-                    } else {
-                        Log.e("Google Login", "Unexpected type of credential");
-                    }
-                }
-
-                @Override
-                public void onError(@NonNull GetCredentialException e) {
-                    Log.e("Google Login", "Error occured");
-                    Log.e("Google Login", e.getLocalizedMessage());
-                    e.printStackTrace();
-                }
-            });
-        }
-    }
-
-    public void logout() {
-        getApplicationContext().getSharedPreferences("sharelocation_user", 0).edit().clear().apply();
-    }
 
     public void updateScreen() {
         SharedPreferences sp = getApplicationContext().getSharedPreferences("sharelocation_user", 0);
@@ -388,6 +343,22 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         mMarker.setTitle(this.user.getDisplayName());
     }
 
+    @Override // startLocationUpdate when re-open app
+    public void onResume() {
+        super.onResume();
+        if (fusedLocationClient != null) {
+            startRequestLocation();
+        }
+    }
+
+    @Override // stopLocationUpdate when close app
+    public void onPause() {
+        super.onPause();
+        if (locationUpdates != null) {
+            fusedLocationClient.removeLocationUpdates(locationUpdates);
+        }
+    }
+
     public static Bitmap getBitmapFromVectorDrawable(Context context, int drawableId) {
         Drawable drawable = ContextCompat.getDrawable(context, drawableId);
 
@@ -399,124 +370,21 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         return bitmap;
     }
 
-    private void startRequestLocation() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        boolean isRestartRequired = false;
+        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+            if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                isRestartRequired = true;
 
-        LocationRequest.Builder requestBuilder = new LocationRequest.Builder(new LocationRequest());
-        requestBuilder.setMinUpdateDistanceMeters(1f);
-        requestBuilder.setIntervalMillis(1000);
-        requestBuilder.setWaitForAccurateLocation(true);
-
-        locationUpdates = new LocationCallback() {
-            @Override
-            public void onLocationResult(LocationResult locationResult) {
-                curPos = locationResult.getLastLocation();
-
-                LatLng pos = new LatLng(curPos.getLatitude(), curPos.getLongitude());
-                if (mMarker != null) {
-                    mMarker.setPosition(pos);
-                    mMarker.setRotation(curPos.getBearing());
-                    mMarker.setSnippet(curPos.getSpeed()+" km/h");
-                }
-
-                binding.speedTextView.setText(String.valueOf(new BigDecimal(curPos.getSpeed()).setScale(2, RoundingMode.HALF_DOWN))+" km/h");
-
-                if (track && mMap != null) // set zoom by speed
-                    mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 15f+(5/(curPos.getSpeed() == 0.0f ? 1f : curPos.getSpeed())), mMap.getCameraPosition().tilt, mMap.getCameraPosition().bearing)), 1000, null);
+//                Toast.makeText(this, "위치에 항상 접근할 수 있도록 권한을 허용해주세요.", Toast.LENGTH_LONG).show();
+//                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, 1);
+//                Toast.makeText(this, "권한을 허용한 후, 앱을 재시작 해 주세요", Toast.LENGTH_LONG).show();
+            }else {
+                Toast.makeText(this, "권한이 허용되었습니다.", Toast.LENGTH_LONG).show();
             }
-        };
-        fusedLocationClient.requestLocationUpdates(requestBuilder.build(), locationUpdates, Looper.myLooper());
+        }
     }
 
-    private Timer startSyncLocation() {
-        Log.d("Timer", "start");
-        return TimeUtil.setInterval(new TimerTask() {
-            @Override
-            public void run() {
-                if (curPos != null) {
-                    String result;
-
-                    if (user == null)
-                        result = HttpUtil.getInstance().post("https://lyj.kr/Sync", "group="+group, null);
-                    else {
-                        String query;
-                        try {
-                            query = "id="+user.getId()+"&group="+group+"&name="+ URLEncoder.encode(user.getDisplayName(), "utf-8")+"&loc_lat="+curPos.getLatitude()+"&loc_lng="+curPos.getLongitude()+"&heading="+curPos.getBearing()+"&speed="+curPos.getSpeed();
-                        } catch (UnsupportedEncodingException e) {
-                            throw new RuntimeException(e);
-                        }
-                        result = HttpUtil.getInstance().post("https://lyj.kr/Sync", query, null);
-                    }
-
-                    try {
-                        JSONArray parsedResult = new JSONArray(result);
-                        Map<String, Marker> newList = new HashMap<>();
-                        for (int i=0;i<parsedResult.length();i++) {
-                            JSONObject tmp = parsedResult.getJSONObject(i);
-
-                            if (user != null && user.getId().equals(tmp.getString("id"))) continue;
-
-                            Log.d("position", tmp.toString());
-
-                            if (markers.containsKey(tmp.getString("id"))) {
-                                Marker mkrTmp = markers.get(tmp.getString("id"));
-                                new Handler(Looper.getMainLooper()).post(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        try {
-                                            mkrTmp.setSnippet(tmp.getString("speed")+" km/h");
-                                            mkrTmp.setRotation(Float.parseFloat(tmp.getString("heading"))-mMap.getCameraPosition().bearing);
-                                            mkrTmp.setPosition(new LatLng(Double.parseDouble(tmp.getString("loc_lat")), Double.parseDouble(tmp.getString("loc_lng"))));
-                                        } catch (JSONException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-                                });
-
-                                newList.put(tmp.getString("id"), mkrTmp);
-                            }else {
-                                new Handler(Looper.getMainLooper()).post(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        try {
-                                            MarkerOptions mkrOptTmp = new MarkerOptions();
-                                            mkrOptTmp.icon(BitmapDescriptorFactory.fromBitmap(getBitmapFromVectorDrawable(MainActivity.this, R.drawable.arrow_maps_icon_217970)));
-                                            mkrOptTmp.title(tmp.getString("name"));
-                                            mkrOptTmp.snippet(tmp.getString("speed")+" km/h");
-                                            mkrOptTmp.rotation(Float.parseFloat(tmp.getString("heading"))-mMap.getCameraPosition().bearing);
-                                            mkrOptTmp.position(new LatLng(Double.parseDouble(tmp.getString("loc_lat")), Double.parseDouble(tmp.getString("loc_lng"))));
-
-                                            Marker mkrTmp = mMap.addMarker(mkrOptTmp);
-                                            mkrTmp.showInfoWindow();
-                                            newList.put(tmp.getString("id"), mkrTmp);
-                                        } catch (JSONException e) {
-                                            throw new RuntimeException(e);
-                                        }
-                                    }
-                                });
-                            }
-                        }
-
-                        new Handler(getMainLooper()).post(new Runnable() {
-                            @Override
-                            public void run() {
-                                markers.forEach((k,v)->{
-                                    if (!newList.containsKey(k)) {
-                                        v.remove();
-                                    }else {
-                                        newList.remove(k);
-                                    }
-                                });
-                                newList.forEach((k, v) -> {
-                                    markers.put(k, v);
-                                });
-                            }
-                        });
-                    } catch (JSONException e) {
-                        throw new RuntimeException(e);
-                    }
-                }
-            }
-        }, 1000);
-    }
 }
