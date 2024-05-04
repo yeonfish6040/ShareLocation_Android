@@ -19,8 +19,6 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
 import android.location.Location;
-import android.location.LocationListener;
-import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -33,6 +31,7 @@ import android.widget.Toast;
 import com.google.android.gms.location.FusedLocationProviderClient;
 import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationResult;
+import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.Priority;
 import com.google.android.gms.maps.CameraUpdateFactory;
@@ -82,8 +81,8 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     private Map<String, Marker> markers = new HashMap<>();
 
     // location
-    private LocationManager locationManager;
-    private LocationListener locationUpdates;
+    private FusedLocationProviderClient fusedLocationClient;
+    private LocationCallback locationUpdates;
     private boolean track = false;
     private Location curPos;
     private Timer locationUpdate;
@@ -173,9 +172,13 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     public void onMapReady(GoogleMap googleMap) {
         mMap = googleMap;
 
-        locationManager = (LocationManager)getSystemService(Context.LOCATION_SERVICE);
+        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
+        fusedLocationClient.getLastLocation().addOnSuccessListener(this, new OnSuccessListener<Location>() {
+            @Override
+            public void onSuccess(Location location) {
+                if (location == null) return;
 
                 // Login
                 if (googleAuth.checkLogin())
@@ -203,9 +206,6 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                 locationUpdate = TimeUtil.setInterval(new TimerTask() { @Override public void run() { syncLocation(); } }, 1000);
             }
         });
-
-        locationUpdate = startSyncLocation();
-
 
         startRequestLocation();
     }
