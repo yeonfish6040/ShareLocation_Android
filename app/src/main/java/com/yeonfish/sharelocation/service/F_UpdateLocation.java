@@ -1,58 +1,36 @@
 package com.yeonfish.sharelocation.service;
 
 import android.Manifest;
-import android.annotation.SuppressLint;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.location.Location;
-import android.os.Build;
-import android.os.Handler;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.os.IBinder;
-import android.os.Looper;
 import android.util.Log;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.app.NotificationCompat;
 
-import com.google.android.gms.location.FusedLocationProviderClient;
-import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationRequest;
-import com.google.android.gms.location.LocationResult;
-import com.google.android.gms.location.LocationServices;
-import com.google.android.gms.maps.CameraUpdateFactory;
-import com.google.android.gms.maps.model.BitmapDescriptorFactory;
-import com.google.android.gms.maps.model.CameraPosition;
-import com.google.android.gms.maps.model.LatLng;
-import com.google.android.gms.maps.model.Marker;
-import com.google.android.gms.maps.model.MarkerOptions;
 import com.yeonfish.sharelocation.MainActivity;
 import com.yeonfish.sharelocation.R;
-import com.yeonfish.sharelocation.databinding.ActivityMainBinding;
 import com.yeonfish.sharelocation.user.GoogleAuth;
 import com.yeonfish.sharelocation.user.GoogleUser;
 import com.yeonfish.sharelocation.util.HttpUtil;
+import com.yeonfish.sharelocation.util.SpeedUtil;
 
-import org.json.JSONArray;
-import org.json.JSONException;
-import org.json.JSONObject;
-
-import java.io.UnsupportedEncodingException;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.net.URLEncoder;
-import java.util.HashMap;
-import java.util.Map;
-
-import kotlinx.coroutines.GlobalScope;
-
 
 public class F_UpdateLocation extends Service {
 
@@ -62,9 +40,10 @@ public class F_UpdateLocation extends Service {
     private GoogleUser googleUser;
     private String group;
 
-    private FusedLocationProviderClient client;
-    private LocationCallback locationUpdates;
-    private LocationRequest request;
+    private LocationManager client;
+    private LocationListener locationUpdates;
+    private Location curPos;
+    private double speed;
 
     @Override
     public void onCreate() {
@@ -123,7 +102,7 @@ public class F_UpdateLocation extends Service {
     public void onDestroy() {
         super.onDestroy();
 
-        client.removeLocationUpdates(locationUpdates);
+        client.removeUpdates(locationUpdates);
 
         stopForeground(true);
         stopSelf();
@@ -136,20 +115,18 @@ public class F_UpdateLocation extends Service {
     }
 
     void syncLocation() {
-        LocationRequest.Builder requestBuilder = new LocationRequest.Builder(new LocationRequest());
-        requestBuilder.setIntervalMillis(1000);
-        requestBuilder.setMinUpdateDistanceMeters(1f);
-        requestBuilder.setWaitForAccurateLocation(true);
-        request = requestBuilder.build();
-        locationUpdates = new LocationCallback() {
+        locationUpdates = new LocationListener() {
             @Override
-            public void onLocationResult(LocationResult locationResult) {
+            public void onLocationChanged(@NonNull Location location) {
                 new Thread(new Runnable() {
                     @Override
                     public void run() {
                         try {
-                            Location curPos = locationResult.getLastLocation();
-                            String query = "id=" + googleUser.getId() + "&group=" + group + "&name=" + URLEncoder.encode(googleUser.getDisplayName(), "utf-8") + "&loc_lat=" + curPos.getLatitude() + "&loc_lng=" + curPos.getLongitude() + "&heading=" + curPos.getBearing() + "&speed=" + curPos.getSpeed();
+                            if (curPos == null)
+                                curPos = location;
+                            speed = SpeedUtil.calculateSpeed(curPos.getTime(), curPos.getLatitude(), curPos.getLongitude(), location.getTime(), location.getLatitude(), location.getLongitude());
+                            curPos = location;
+                            String query = "id=" + googleUser.getId() + "&group=" + group + "&name=" + URLEncoder.encode(googleUser.getDisplayName(), "utf-8") + "&loc_lat=" + location.getLatitude() + "&loc_lng=" + location.getLongitude() + "&heading=" + location.getBearing() + "&speed=" + location.getSpeed();
                             String result = HttpUtil.getInstance().post("https://lyj.kr/Sync", query, null);
                         } catch (Exception e) {
                             e.printStackTrace();
@@ -159,7 +136,7 @@ public class F_UpdateLocation extends Service {
             }
         };
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {}
-        client = LocationServices.getFusedLocationProviderClient(this);
-        client.requestLocationUpdates(request, locationUpdates, Looper.getMainLooper());
+        client = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
+        client.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1f, locationUpdates);
     }
 }

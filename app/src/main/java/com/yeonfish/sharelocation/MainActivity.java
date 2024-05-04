@@ -1,7 +1,6 @@
 package com.yeonfish.sharelocation;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
@@ -19,8 +18,9 @@ import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
 import android.location.Location;
+import android.location.LocationListener;
+import android.location.LocationManager;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,10 +28,6 @@ import android.util.Log;
 import android.view.View;
 import android.widget.Toast;
 
-import com.google.android.gms.location.FusedLocationProviderClient;
-import com.google.android.gms.location.LocationCallback;
-import com.google.android.gms.location.LocationResult;
-import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.Priority;
 import com.google.android.gms.maps.CameraUpdateFactory;
@@ -43,15 +39,13 @@ import com.google.android.gms.maps.model.CameraPosition;
 import com.google.android.gms.maps.model.LatLng;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
-import com.google.android.gms.tasks.OnSuccessListener;
-import com.google.android.libraries.identity.googleid.GetGoogleIdOption;
-import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.kakao.sdk.common.KakaoSdk;
 import com.yeonfish.sharelocation.databinding.ActivityMainBinding;
 import com.yeonfish.sharelocation.service.F_UpdateLocation;
 import com.yeonfish.sharelocation.user.GoogleAuth;
 import com.yeonfish.sharelocation.util.HttpUtil;
+import com.yeonfish.sharelocation.util.SpeedUtil;
 import com.yeonfish.sharelocation.util.TimeUtil;
 import com.yeonfish.sharelocation.util.UUID;
 import com.yeonfish.sharelocation.user.GoogleUser;
@@ -60,7 +54,6 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import java.io.UnsupportedEncodingException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.net.URLEncoder;
@@ -81,11 +74,12 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     private Map<String, Marker> markers = new HashMap<>();
 
     // location
-    private FusedLocationProviderClient fusedLocationClient;
-    private LocationCallback locationUpdates;
+    private LocationManager locationManager;
+    private LocationListener locationUpdates;
+    private Timer locationUpdate;
     private boolean track = false;
     private Location curPos;
-    private Timer locationUpdate;
+    private double speed = 0f;
 
     // google auth
     private GoogleAuth googleAuth;
@@ -172,41 +166,36 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     public void onMapReady(GoogleMap googleMap) {
         mMap = googleMap;
 
-        fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
+        locationManager = (LocationManager) getSystemService(Context.LOCATION_SERVICE);
 
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
-        fusedLocationClient.getLastLocation().addOnSuccessListener(this, new OnSuccessListener<Location>() {
-            @Override
-            public void onSuccess(Location location) {
-                if (location == null) return;
+        Location location = locationManager.getLastKnownLocation(LocationManager.GPS_PROVIDER);
 
-                // Login
-                if (googleAuth.checkLogin())
-                    try {
-                        googleAuth.login();
-                    } catch (JSONException e) {}
-                else {
-                    user = googleAuth.getUser();
-                    binding.accountTextView.setText("계정: "+user.getEmail()+" (로그아웃)");
-                }
+        if (location == null) return;
 
-                curPos = location;
+        // Login
+        if (googleAuth.checkLogin())
+            try {
+                googleAuth.login();
+            } catch (JSONException e) {}
+        else {
+            user = googleAuth.getUser();
+            binding.accountTextView.setText("계정: "+user.getEmail()+" (로그아웃)");
+        }
+        curPos = location;
 
-                LatLng pos = new LatLng(location.getLatitude(), location.getLongitude());
-                mMarker = mMap.addMarker(new MarkerOptions()
-                        .position(pos)
-                        .title(user != null ? user.getDisplayName() : "Me!")
-                        .snippet(curPos.getSpeed()+" km/h"));
-                mMarker.setIcon(BitmapDescriptorFactory.fromBitmap(getBitmapFromVectorDrawable(MainActivity.this, R.drawable.arrow_maps_icon_217969)));
-                mMarker.setRotation(location.getBearing());
-                mMarker.showInfoWindow();
+        LatLng pos = new LatLng(location.getLatitude(), location.getLongitude());
+        mMarker = mMap.addMarker(new MarkerOptions()
+                .position(pos)
+                .title(user != null ? user.getDisplayName() : "Me!")
+                .snippet(speed+" km/h"));
+        mMarker.setIcon(BitmapDescriptorFactory.fromBitmap(getBitmapFromVectorDrawable(MainActivity.this, R.drawable.arrow_maps_icon_217969)));
+        mMarker.setRotation(location.getBearing());
+        mMarker.showInfoWindow();
 
-                mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 17.0F, mMap.getCameraPosition().tilt, mMap.getCameraPosition().bearing)), 1000, null);
-                mMap.setOnCameraMoveListener(new GoogleMap.OnCameraMoveListener() { @Override public void onCameraMove() {mMarker.setRotation(curPos.getBearing()-mMap.getCameraPosition().bearing); }});
-                locationUpdate = TimeUtil.setInterval(new TimerTask() { @Override public void run() { syncLocation(); } }, 1000);
-            }
-        });
-
+        mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 17.0F, mMap.getCameraPosition().tilt, mMap.getCameraPosition().bearing)), 1000, null);
+        mMap.setOnCameraMoveListener(new GoogleMap.OnCameraMoveListener() { @Override public void onCameraMove() {mMarker.setRotation(curPos.getBearing()-mMap.getCameraPosition().bearing); }});
+        locationUpdate = TimeUtil.setInterval(new TimerTask() { @Override public void run() { syncLocation(); } }, 1000);
         startRequestLocation();
     }
 
@@ -230,7 +219,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                 }else {
                     track = true;
                     if (curPos != null)
-                        mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(new LatLng(curPos.getLatitude(), curPos.getLongitude()), 15f+(5/(curPos.getSpeed() == 0.0f ? 2f : curPos.getSpeed())), mMap.getCameraPosition().tilt, curPos.getBearing())), 1000, null);
+                        mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(new LatLng(curPos.getLatitude(), curPos.getLongitude()), (float) (15f+(5/(speed == 0.0f ? 2f : speed))), mMap.getCameraPosition().tilt, curPos.getBearing())), 1000, null);
                     binding.buttonCLocation.setBackgroundColor(getColor(R.color.enable));
                 }
             }
@@ -269,24 +258,25 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         requestBuilder.setIntervalMillis(1000);
         requestBuilder.setMinUpdateDistanceMeters(1f);
         requestBuilder.setWaitForAccurateLocation(true);
-        locationUpdates = new LocationCallback() {
+        locationUpdates = new LocationListener() {
             @Override
-            public void onLocationResult(LocationResult locationResult) {
-                curPos = locationResult.getLastLocation();
-                Log.d("Location Speed", String.valueOf(locationResult.getLastLocation().getSpeed()));
+            public void onLocationChanged(Location location) {
 
-                LatLng pos = new LatLng(curPos.getLatitude(), curPos.getLongitude());
+                speed = SpeedUtil.calculateSpeed(curPos.getTime(), curPos.getLatitude(), curPos.getLongitude(), location.getTime(), location.getLatitude(), location.getLongitude());
+                curPos = location;
+
+                LatLng pos = new LatLng(location.getLatitude(), location.getLongitude());
                 if (mMarker != null) {
                     mMarker.setPosition(pos);
-                    mMarker.setRotation(curPos.getBearing());
-                    mMarker.setSnippet(curPos.getSpeed()+" km/h");
+                    mMarker.setRotation(location.getBearing());
+                    mMarker.setSnippet(speed+" km/h");
                 }
-                binding.speedTextView.setText(String.valueOf(new BigDecimal(curPos.getSpeed()).setScale(2, RoundingMode.HALF_DOWN))+" km/h");
+                binding.speedTextView.setText(BigDecimal.valueOf(speed).setScale(2, RoundingMode.HALF_DOWN) +" km/h");
                 if (track && mMap != null) // set zoom by speed
-                    mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 15f+(5/(curPos.getSpeed() == 0.0f ? 1f : curPos.getSpeed())), mMap.getCameraPosition().tilt, curPos.getBearing())), 1000, null);
+                    mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, (float) (15d+(5/(speed == 0.0f ? 1f : speed))), mMap.getCameraPosition().tilt, location.getBearing())), 1000, null);
             }
         };
-        fusedLocationClient.requestLocationUpdates(requestBuilder.build(), locationUpdates, Looper.getMainLooper());
+        locationManager.requestLocationUpdates(LocationManager.GPS_PROVIDER, 1000L, 1f, locationUpdates);
     }
 
     private void syncLocation() {
@@ -298,7 +288,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                     result = HttpUtil.getInstance().post("https://lyj.kr/Sync", "group="+group, null);
                 else {
                     String query;
-                    query = "id="+user.getId()+"&group="+group+"&name="+ URLEncoder.encode(user.getDisplayName(), "utf-8")+"&loc_lat="+curPos.getLatitude()+"&loc_lng="+curPos.getLongitude()+"&heading="+curPos.getBearing()+"&speed="+curPos.getSpeed();
+                    query = "id="+user.getId()+"&group="+group+"&name="+ URLEncoder.encode(user.getDisplayName(), "utf-8")+"&loc_lat="+curPos.getLatitude()+"&loc_lng="+curPos.getLongitude()+"&heading="+curPos.getBearing()+"&speed="+speed;
                     result = HttpUtil.getInstance().post("https://lyj.kr/Sync", query, null);
                 }
 
@@ -394,7 +384,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         super.onResume();
         if (service != null)
             stopService(service);
-        if (fusedLocationClient != null) {
+        if (locationManager != null) {
             startRequestLocation();
         }
     }
@@ -404,7 +394,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
         super.onPause();
         if (locationUpdates != null && !exit) {
             Log.d("OnPause", "");
-            fusedLocationClient.removeLocationUpdates(locationUpdates);
+            locationManager.removeUpdates(locationUpdates);
             service = new Intent(this, F_UpdateLocation.class);
             service.putExtra("group", group);
             startForegroundService(service);
