@@ -1,14 +1,17 @@
 package com.yeonfish.sharelocation;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.credentials.CredentialManager;
 
 import android.Manifest;
+import android.app.ActivityManager;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -17,6 +20,7 @@ import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
 import android.location.Location;
 import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -29,6 +33,7 @@ import com.google.android.gms.location.LocationCallback;
 import com.google.android.gms.location.LocationResult;
 import com.google.android.gms.location.LocationServices;
 import com.google.android.gms.location.LocationRequest;
+import com.google.android.gms.location.Priority;
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
@@ -41,8 +46,10 @@ import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.tasks.OnSuccessListener;
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption;
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.kakao.sdk.common.KakaoSdk;
 import com.yeonfish.sharelocation.databinding.ActivityMainBinding;
+import com.yeonfish.sharelocation.service.F_UpdateLocation;
 import com.yeonfish.sharelocation.user.GoogleAuth;
 import com.yeonfish.sharelocation.util.HttpUtil;
 import com.yeonfish.sharelocation.util.TimeUtil;
@@ -85,37 +92,48 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     private CredentialManager credentialManager;
     private GoogleUser user;
 
+    // Foreground Service
+    private Intent service;
+    private boolean exit = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         binding = ActivityMainBinding.inflate(getLayoutInflater());
         setContentView(binding.getRoot());
 
+        Intent intent = getIntent();
+
+        if (service == null) {
+            if (isMyServiceRunning(F_UpdateLocation.class))
+                stopService(new Intent(this, F_UpdateLocation.class).setAction("stop"));
+        } else stopService(service.setAction("stop"));
+
+        if (intent.getAction() != null && intent.getAction().equals("stop")) {
+            exit = true;
+            finishAndRemoveTask();
+        }
+
         // kakao api
         KakaoSdk.init(this, "7c91ec8d182523adfa1e6f0df190eff3");
 
-        // Login
+        // prepare Google Login
         credentialManager = CredentialManager.create(this);
         googleAuth = new GoogleAuth(this, credentialManager);
-        if (googleAuth.checkLogin())
-            try {
-                googleAuth.login();
-            } catch (JSONException e) {}
-        else {
-            this.user = googleAuth.getUser();
 
-            binding.accountTextView.setText("계정: "+this.user.getEmail()+" (로그아웃)");
-        }
 
         // get group
-        Intent intent = getIntent();
         Uri data = intent.getData();
+        SharedPreferences spg = this.getSharedPreferences("sharelocation_group", 0);
+        SharedPreferences.Editor editor = spg.edit();
+        if (spg.getString("group", null) != null) group = spg.getString("group", null);
         if (data != null) group = data.getQueryParameter("group");
         if (group == null) group = UUID.generate();
+        editor.putString("group", group); editor.apply();
         binding.groupTextView.setText("그룹: " + group);
-
         binding.buttonShare.setOnClickListener(clickListener);
         binding.buttonCLocation.setOnClickListener(clickListener);
+        binding.groupTextView.setOnClickListener(clickListener);
         binding.accountTextView.setOnClickListener(clickListener);
 
         isGranted = (
@@ -124,8 +142,25 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 //                        ActivityCompat.checkSelfPermission(this, android.Manifest.permission.FOREGROUND_SERVICE_LOCATION) == PackageManager.PERMISSION_GRANTED
         );
         if (!isGranted) {
-            String[] permissions = { android.Manifest.permission.ACCESS_FINE_LOCATION, android.Manifest.permission.ACCESS_COARSE_LOCATION };
-            ActivityCompat.requestPermissions(this, permissions, 6040);
+            new MaterialAlertDialogBuilder(this)
+                    .setMessage("이 앱은 백그라운드 위치 권한 및 알림권한이 필요합니다.\n승인 하시겠습니까?")
+                    .setNegativeButton("거부", new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            Toast.makeText(MainActivity.this, "거부되었습니다", Toast.LENGTH_LONG).show();
+                        }
+                    }).setPositiveButton("승인", new DialogInterface.OnClickListener() {
+                        @Override
+                        public void onClick(DialogInterface dialog, int which) {
+                            String[] permissions = new String[0];
+                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                                permissions = new String[]{ Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.POST_NOTIFICATIONS };
+                            }else {
+                                permissions = new String[]{ Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION };
+                            }
+                            ActivityCompat.requestPermissions(MainActivity.this, permissions, 6040);
+                        }
+                    }).show();
         }
 
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
@@ -145,6 +180,16 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
             public void onSuccess(Location location) {
                 if (location == null) return;
 
+                // Login
+                if (googleAuth.checkLogin())
+                    try {
+                        googleAuth.login();
+                    } catch (JSONException e) {}
+                else {
+                    user = googleAuth.getUser();
+                    binding.accountTextView.setText("계정: "+user.getEmail()+" (로그아웃)");
+                }
+
                 curPos = location;
 
                 LatLng pos = new LatLng(location.getLatitude(), location.getLongitude());
@@ -158,6 +203,7 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
                 mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 17.0F, mMap.getCameraPosition().tilt, mMap.getCameraPosition().bearing)), 1000, null);
                 mMap.setOnCameraMoveListener(new GoogleMap.OnCameraMoveListener() { @Override public void onCameraMove() {mMarker.setRotation(curPos.getBearing()-mMap.getCameraPosition().bearing); }});
+                locationUpdate = TimeUtil.setInterval(new TimerTask() { @Override public void run() { syncLocation(); } }, 1000);
             }
         });
 
@@ -204,20 +250,30 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                     } catch (JSONException e) {}
                 }
             }
+            if (v.getId() == R.id.groupTextView) {
+                SharedPreferences spg = getSharedPreferences("sharelocation_group", 0);
+                SharedPreferences.Editor editor = spg.edit();
+                group = UUID.generate();
+                editor.putString("group", group); editor.apply();
+
+                updateScreen();
+            }
         }
     };
 
     private void startRequestLocation() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED || ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
 
         LocationRequest.Builder requestBuilder = new LocationRequest.Builder(new LocationRequest());
-        requestBuilder.setMinUpdateDistanceMeters(1f);
+        requestBuilder.setPriority(Priority.PRIORITY_HIGH_ACCURACY);
         requestBuilder.setIntervalMillis(1000);
-        requestBuilder.setWaitForAccurateLocation(false);
+        requestBuilder.setMinUpdateDistanceMeters(1f);
+        requestBuilder.setWaitForAccurateLocation(true);
         locationUpdates = new LocationCallback() {
             @Override
             public void onLocationResult(LocationResult locationResult) {
                 curPos = locationResult.getLastLocation();
+                Log.d("Location Speed", String.valueOf(locationResult.getLastLocation().getSpeed()));
 
                 LatLng pos = new LatLng(curPos.getLatitude(), curPos.getLongitude());
                 if (mMarker != null) {
@@ -227,16 +283,10 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
                 }
                 binding.speedTextView.setText(String.valueOf(new BigDecimal(curPos.getSpeed()).setScale(2, RoundingMode.HALF_DOWN))+" km/h");
                 if (track && mMap != null) // set zoom by speed
-                    mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 15f+(5/(curPos.getSpeed() == 0.0f ? 1f : curPos.getSpeed())), mMap.getCameraPosition().tilt, mMap.getCameraPosition().bearing)), 1000, null);
-                new Thread(new Runnable() {
-                    @Override
-                    public void run() {
-                        syncLocation();
-                    }
-                }).run();
+                    mMap.animateCamera(CameraUpdateFactory.newCameraPosition(new CameraPosition(pos, 15f+(5/(curPos.getSpeed() == 0.0f ? 1f : curPos.getSpeed())), mMap.getCameraPosition().tilt, curPos.getBearing())), 1000, null);
             }
         };
-        fusedLocationClient.requestLocationUpdates(requestBuilder.build(), locationUpdates, Looper.myLooper());
+        fusedLocationClient.requestLocationUpdates(requestBuilder.build(), locationUpdates, Looper.getMainLooper());
     }
 
     private void syncLocation() {
@@ -329,22 +379,21 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
 
 
     public void updateScreen() {
-        SharedPreferences sp = getApplicationContext().getSharedPreferences("sharelocation_user", 0);
+        this.user = googleAuth.getUser();
 
-        GoogleUser userTmp = new GoogleUser();
-        userTmp.setId(sp.getString("id", null));
-        userTmp.setEmail(sp.getString("email", null));
-        userTmp.setDisplayName(sp.getString("name", null));
-        userTmp.setProfilePicture(sp.getString("profilePicture", null));
-        this.user = userTmp;
+        if (this.user == null || this.user.getEmail() == null || mMarker == null)
+            return;
 
+        binding.groupTextView.setText("그룹: "+this.group);
         binding.accountTextView.setText("계정: "+this.user.getEmail()+" (로그아웃)");
-        if (mMarker != null) mMarker.setTitle(this.user.getDisplayName());
+        mMarker.setTitle(this.user.getDisplayName());
     }
 
     @Override // startLocationUpdate when re-open app
     public void onResume() {
         super.onResume();
+        if (service != null)
+            stopService(service);
         if (fusedLocationClient != null) {
             startRequestLocation();
         }
@@ -353,9 +402,23 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     @Override // stopLocationUpdate when close app
     public void onPause() {
         super.onPause();
-        if (locationUpdates != null) {
+        if (locationUpdates != null && !exit) {
+            Log.d("OnPause", "");
             fusedLocationClient.removeLocationUpdates(locationUpdates);
+            service = new Intent(this, F_UpdateLocation.class);
+            service.putExtra("group", group);
+            startForegroundService(service);
         }
+    }
+
+    private boolean isMyServiceRunning(Class<?> serviceClass) {
+        ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+        for (ActivityManager.RunningServiceInfo service : manager.getRunningServices(Integer.MAX_VALUE)) {
+            if (serviceClass.getName().equals(service.service.getClassName())) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public static Bitmap getBitmapFromVectorDrawable(Context context, int drawableId) {
@@ -373,15 +436,16 @@ public class MainActivity extends AppCompatActivity implements OnMapReadyCallbac
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         boolean isRestartRequired = false;
-        if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             if (ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_BACKGROUND_LOCATION) != PackageManager.PERMISSION_GRANTED) {
                 isRestartRequired = true;
 
-//                Toast.makeText(this, "위치에 항상 접근할 수 있도록 권한을 허용해주세요.", Toast.LENGTH_LONG).show();
-//                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, 1);
-//                Toast.makeText(this, "권한을 허용한 후, 앱을 재시작 해 주세요", Toast.LENGTH_LONG).show();
+                Toast.makeText(this, "위치에 항상 접근할 수 있도록 권한을 허용해주세요.", Toast.LENGTH_LONG).show();
+                ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, 1);
+                Toast.makeText(this, "권한을 허용한 후, 앱을 재시작 해 주세요", Toast.LENGTH_LONG).show();
             }else {
                 Toast.makeText(this, "권한이 허용되었습니다.", Toast.LENGTH_LONG).show();
+                restart();
             }
         }
     }

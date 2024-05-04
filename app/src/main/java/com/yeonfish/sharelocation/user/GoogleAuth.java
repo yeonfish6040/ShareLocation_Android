@@ -2,6 +2,7 @@ package com.yeonfish.sharelocation.user;
 
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.os.Bundle;
 import android.os.CancellationSignal;
 import android.os.Handler;
 import android.util.Log;
@@ -22,6 +23,7 @@ import androidx.credentials.exceptions.GetCredentialException;
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption;
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption;
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential;
+import com.google.firebase.analytics.FirebaseAnalytics;
 import com.yeonfish.sharelocation.MainActivity;
 import com.yeonfish.sharelocation.R;
 import com.yeonfish.sharelocation.util.HttpUtil;
@@ -38,6 +40,11 @@ public class GoogleAuth {
 
     private CredentialManager credentialManager;
     private SharedPreferences sp;
+
+    public GoogleAuth(Context context) {
+        this.context = context;
+        this.sp = context.getSharedPreferences("sharelocation_user", 0);
+    }
 
     public GoogleAuth(Context context, CredentialManager credentialManager) {
         this.context = context;
@@ -101,6 +108,10 @@ public class GoogleAuth {
                                 try {
                                     HttpUtil httpUtil = HttpUtil.getInstance();
                                     String result = httpUtil.post("https://oauth2.googleapis.com/tokeninfo", "id_token="+idToken, null);
+                                    Bundle bundle = new Bundle();
+                                    bundle.putString(FirebaseAnalytics.Param.CONTENT, result);
+                                    FirebaseAnalytics.getInstance(context).logEvent(FirebaseAnalytics.Event.LOGIN, bundle);
+
                                     Log.d("Google Login", result);
                                     JSONObject resultJSON = new JSONObject(result);
 

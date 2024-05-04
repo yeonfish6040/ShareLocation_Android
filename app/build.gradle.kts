@@ -11,10 +11,10 @@ android {
 
     defaultConfig {
         applicationId = "com.yeonfish.sharelocation"
-        minSdk = 28
+        minSdk = 29
         targetSdk = 34
-        versionCode = 53
-        versionName = "1.0.3"
+        versionCode = 64
+        versionName = "1.1.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
