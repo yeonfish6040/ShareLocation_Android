@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "597358511717-j910132723jbbdog46r06d6o4rsrdrq5.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.yeonfish.sharelocation",
+            "certificate_hash": "31d0aca3a6841e0010ad32296717314e98c9a7ea"
+          }
+        },
+        {
           "client_id": "597358511717-o93gu875jn7anpn5v75fp27g2l8olboo.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
@@ -22,7 +30,7 @@
           }
         },
         {
-          "client_id": "597358511717-plf3or7lf8cvtc47j3vf7gpaigsq000o.apps.googleusercontent.com",
+          "client_id": "597358511717-j7ib2rvtv52d03i7ienuvg2ohs16ofu7.apps.googleusercontent.com",
           "client_type": 3
         }
       ],
@@ -35,7 +43,7 @@
         "appinvite_service": {
           "other_platform_oauth_client": [
             {
-              "client_id": "597358511717-plf3or7lf8cvtc47j3vf7gpaigsq000o.apps.googleusercontent.com",
+              "client_id": "597358511717-j7ib2rvtv52d03i7ienuvg2ohs16ofu7.apps.googleusercontent.com",
               "client_type": 3
             }
           ]
